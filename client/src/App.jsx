@@ -128,7 +128,7 @@ function HomePage({ products, featured, addToCart }) {
           </p>
           <div className="cta-row">
             <a href="#shop" className="primary-btn">Shop now</a>
-            <a href="/contact" className="secondary-btn">Contact</a>
+            <NavLink to="/contact" className="secondary-btn">Contact</NavLink>
           </div>
         </div>
         <div className="hero-visual">
