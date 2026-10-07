@@ -36,6 +36,16 @@ jobs:
       - name: Configure GitHub Pages
         id: pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Require the deployed API URL
+        run: |
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "Set the VITE_API_BASE_URL repository variable to the Vercel deployment origin before publishing."
+            exit 1
+          fi
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
       - name: Build storefront
         run: npm run build --prefix client
         env:
