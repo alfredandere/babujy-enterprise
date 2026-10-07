@@ -36,8 +36,6 @@ jobs:
       - name: Configure GitHub Pages
         id: pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - name: Require the deployed API URL
         run: |
           if [ -z "$VITE_API_BASE_URL" ]; then
