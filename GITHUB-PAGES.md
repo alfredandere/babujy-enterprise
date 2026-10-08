@@ -1,21 +1,28 @@
+# Vercel production deployment
+
+The storefront and Express API deploy together as Vercel services from the
+repository root. The `vercel.json` configuration sends `/api/*` requests to the
+API and all other paths to the React storefront.
+
+The `babujy-enterprise` Vercel project uses the repository root as its root
+directory and the Services framework preset. The custom domain
+`www.babujyenterprise.co.ke` is attached to the production deployment;
+`babujyenterprise.co.ke` redirects to `www`.
+
+The storefront uses the same-origin `/api` path on Vercel. Do not set
+`VITE_API_BASE_URL` in the Vercel project. GitHub Pages builds can continue to
+use the repository Actions variable `VITE_API_BASE_URL` to reach the API.
+
 # GitHub Pages deployment
 
-GitHub Pages hosts the React storefront as a static site. The Express API must
-remain deployed separately (for example, on Vercel).
+GitHub Pages can still host a static mirror of the React storefront. The
+Express API must be deployed separately for that mirror.
 
-1. Push this project to a GitHub repository on the `main` branch.
-2. Deploy this repository to Vercel as a separate project with the root
-   directory set to `server`. Vercel detects the Express API from
-   `server/package.json` and `server/index.js`. Set `ADMIN_EMAIL` and
-   `ADMIN_PASSWORD` in the Vercel project environment variables if the admin
-   login is needed.
-3. In GitHub, open the repository's **Settings → Secrets and variables →
-   Actions → Variables** and add `VITE_API_BASE_URL` with the Vercel deployment
-   origin (for example, `https://your-project.vercel.app`, without `/api`).
-4. In **Settings → Pages**, set the build and deployment source to **GitHub
-   Actions**.
-5. Push to `main` or run the **Deploy storefront to GitHub Pages** workflow.
+1. In GitHub, open **Settings → Pages** and set the build and deployment source
+   to **GitHub Actions**.
+2. In **Settings → Secrets and variables → Actions → Variables**, set
+   `VITE_API_BASE_URL` to the Vercel deployment origin, without `/api`.
+3. Push to `main` or run the **Deploy storefront to GitHub Pages** workflow.
 
-The workflow builds the storefront with the correct repository URL prefix and
-deploys it. The cart is browser-local; product data and admin API calls require
-the configured API URL.
+The workflow builds with the repository URL prefix and publishes `client/dist`.
+The cart is browser-local and product data is served by the API.

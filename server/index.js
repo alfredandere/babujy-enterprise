@@ -8,7 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.redirect(302, 'https://alfredandere.github.io/babujy-enterprise/');
+  res.redirect(302, 'https://www.babujyenterprise.co.ke/');
 });
 
 const products = [
