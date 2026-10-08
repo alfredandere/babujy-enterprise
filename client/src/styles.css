@@ -471,6 +471,10 @@ button, input, textarea {
   min-width: 0;
 }
 
+.admin-page > .product-manager {
+  scroll-margin-top: 24px;
+}
+
 .product-editor {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -512,6 +516,25 @@ button, input, textarea {
   overflow-wrap: anywhere;
 }
 
+.product-image-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.product-image-preview img {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
 .product-editor .featured-toggle {
   display: flex;
   flex-direction: row;
@@ -536,6 +559,33 @@ button, input, textarea {
   display: flex;
   flex-direction: column;
   margin-top: 16px;
+}
+
+.inventory-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.45fr);
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.inventory-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.inventory-filters input,
+.inventory-filters select {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f9f7f4;
+  color: var(--text);
 }
 
 .admin-product-row {
@@ -881,7 +931,8 @@ button:disabled {
   }
 
   .product-editor,
-  .password-form {
+  .password-form,
+  .inventory-filters {
     grid-template-columns: minmax(0, 1fr);
   }
 

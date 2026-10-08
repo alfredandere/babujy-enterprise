@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isSupabaseConfigured, supabase } from './supabase';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL
@@ -319,6 +319,11 @@ function AdminPage({ products, onProductsChanged }) {
   const [editingProduct, setEditingProduct] = useState(null);
   const [productForm, setProductForm] = useState(emptyProduct);
   const [imageFile, setImageFile] = useState(null);
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventoryCategory, setInventoryCategory] = useState('All categories');
+  const [imagePreview, setImagePreview] = useState('');
+  const productManagerRef = useRef(null);
+  const productNameInputRef = useRef(null);
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -359,6 +364,17 @@ function AdminPage({ products, onProductsChanged }) {
       });
     return () => { active = false; };
   }, [session]);
+
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreview(productForm.image.trim());
+      return undefined;
+    }
+
+    const previewUrl = URL.createObjectURL(imageFile);
+    setImagePreview(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [imageFile, productForm.image]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -479,10 +495,19 @@ function AdminPage({ products, onProductsChanged }) {
         description: productForm.description.trim(),
         featured: productForm.featured
       };
-      const result = editingProduct
-        ? await supabase.from('products').update(record).eq('id', editingProduct.id)
-        : await supabase.from('products').insert(record);
-      if (result.error) throw result.error;
+      if (editingProduct) {
+        const { data, error } = await supabase
+          .from('products')
+          .update(record)
+          .eq('id', editingProduct.id)
+          .select('id')
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) throw new Error('Product was not found or you do not have permission to edit it.');
+      } else {
+        const { error } = await supabase.from('products').insert(record);
+        if (error) throw error;
+      }
 
       await onProductsChanged();
       setProductForm(emptyProduct());
@@ -509,7 +534,27 @@ function AdminPage({ products, onProductsChanged }) {
     setImageFile(null);
     setMessage('');
     setAuthError('');
+    requestAnimationFrame(() => {
+      productManagerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      productNameInputRef.current?.focus({ preventScroll: true });
+    });
   };
+
+  const cancelProductEdit = () => {
+    setEditingProduct(null);
+    setProductForm(emptyProduct());
+    setImageFile(null);
+    setMessage('');
+    setAuthError('');
+  };
+
+  const visibleProducts = products.filter(product => {
+    const matchesSearch = `${product.name} ${product.description || ''}`
+      .toLowerCase()
+      .includes(inventorySearch.trim().toLowerCase());
+    return matchesSearch &&
+      (inventoryCategory === 'All categories' || product.category === inventoryCategory);
+  });
 
   const deleteProduct = async (product) => {
     if (!window.confirm(`Delete "${product.name}" from the catalog?`)) return;
@@ -517,8 +562,14 @@ function AdminPage({ products, onProductsChanged }) {
     setAuthError('');
     setMessage('');
     try {
-      const { error } = await supabase.from('products').delete().eq('id', product.id);
+      const { data, error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', product.id)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!data) throw new Error('Product was not found or you do not have permission to delete it.');
       await onProductsChanged();
       setMessage(`${product.name} deleted.`);
     } catch (error) {
@@ -587,7 +638,7 @@ function AdminPage({ products, onProductsChanged }) {
         <div className="stat-card"><span>Featured products</span><strong>{products.filter(product => product.featured).length}</strong></div>
       </section>
 
-      <section className="panel product-manager">
+      <section className="panel product-manager" ref={productManagerRef}>
         <div className="admin-section-heading">
           <div>
             <p className="eyebrow">Catalog</p>
@@ -595,7 +646,7 @@ function AdminPage({ products, onProductsChanged }) {
           </div>
         </div>
         <form className="product-editor" onSubmit={saveProduct}>
-          <label>Product name<input name="name" required maxLength="120" value={productForm.name} onChange={updateProductField} /></label>
+          <label>Product name<input ref={productNameInputRef} name="name" required maxLength="120" value={productForm.name} onChange={updateProductField} /></label>
           <label>Category
             <select name="category" value={productForm.category} onChange={updateProductField}>
               <option>Kids Wear</option><option>Pullnecks</option><option>Nutrition</option>
@@ -604,11 +655,12 @@ function AdminPage({ products, onProductsChanged }) {
           <label>Price (KSh)<input name="price" type="number" min="1" step="1" required value={productForm.price} onChange={updateProductField} /></label>
           <label>Product image URL<input name="image" type="url" value={productForm.image} onChange={updateProductField} placeholder="https://…" /></label>
           <label className="image-upload">Or upload an image<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={selectImage} />{imageFile && <span>{imageFile.name}</span>}</label>
+          {imagePreview && <div className="product-image-preview"><span>Image preview</span><img src={imagePreview} alt={`Preview of ${productForm.name || 'product'}`} /></div>}
           <label className="product-description">Description<textarea name="description" rows="3" maxLength="500" value={productForm.description} onChange={updateProductField} /></label>
           <label className="featured-toggle"><input name="featured" type="checkbox" checked={productForm.featured} onChange={updateProductField} /> Show in featured collection</label>
           <div className="product-editor-actions">
             <button type="submit" className="primary-btn" disabled={working}>{working ? 'Saving…' : editingProduct ? 'Save changes' : 'Add product'}</button>
-            {editingProduct && <button type="button" className="secondary-btn" onClick={() => { setEditingProduct(null); setProductForm(emptyProduct()); setImageFile(null); }}>Cancel edit</button>}
+            {editingProduct && <button type="button" className="secondary-btn" disabled={working} onClick={cancelProductEdit}>Cancel edit</button>}
           </div>
         </form>
         {authError && <p className="message-box error-message" role="alert">{authError}</p>}
@@ -619,22 +671,34 @@ function AdminPage({ products, onProductsChanged }) {
         <div className="admin-section-heading">
           <div><p className="eyebrow">Inventory</p><h3>Manage products</h3></div>
         </div>
+        <div className="inventory-filters">
+          <label>Search products
+            <input type="search" value={inventorySearch} onChange={event => setInventorySearch(event.target.value)} placeholder="Search by name or description" />
+          </label>
+          <label>Category
+            <select value={inventoryCategory} onChange={event => setInventoryCategory(event.target.value)}>
+              <option>All categories</option><option>Kids Wear</option><option>Pullnecks</option><option>Nutrition</option>
+            </select>
+          </label>
+        </div>
         <div className="admin-product-list">
-          {products.map(product => (
+          {visibleProducts.map(product => (
             <article className="admin-product-row" key={product.id}>
-              <img src={product.image} alt="" />
+              <img src={product.image} alt={`${product.name} product`} />
               <div className="admin-product-details">
                 <strong>{product.name}</strong>
                 <span>{product.category} · KSh {Number(product.price).toLocaleString()}</span>
                 {product.featured && <span className="featured-label">Featured</span>}
               </div>
               <div className="admin-product-actions">
-                <button type="button" className="secondary-btn" onClick={() => editProduct(product)}>Edit</button>
+                <button type="button" className="secondary-btn" disabled={working} onClick={() => editProduct(product)}>Edit</button>
                 <button type="button" className="danger-btn" disabled={working} onClick={() => deleteProduct(product)}>Delete</button>
               </div>
             </article>
           ))}
-          {products.length === 0 && <p>No products yet. Add the first item above.</p>}
+          {products.length === 0
+            ? <p>No products yet. Add the first item above.</p>
+            : visibleProducts.length === 0 && <p>No products match these filters.</p>}
         </div>
       </section>
 
