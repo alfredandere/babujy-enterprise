@@ -1,5 +1,6 @@
 import { Routes, Route, NavLink } from 'react-router-dom';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isSupabaseConfigured, supabase } from './supabase';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL
   ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')}/api`
@@ -9,18 +10,41 @@ function App() {
   const [products, setProducts] = useState([]);
   const [featured, setFeatured] = useState([]);
   const [cart, setCart] = useState([]);
-  const [adminLoggedIn, setAdminLoggedIn] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [catalogError, setCatalogError] = useState('');
+
+  const refreshProducts = useCallback(async () => {
+    let productData;
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('products').select('*').order('name');
+      if (error) throw error;
+      productData = data;
+      setFeatured(data.filter(product => product.featured));
+    } else {
+      const [productsResponse, featuredResponse] = await Promise.all([
+        fetch(`${API_BASE}/products`),
+        fetch(`${API_BASE}/products/featured`)
+      ]);
+      if (!productsResponse.ok || !featuredResponse.ok) {
+        throw new Error('Could not load products from the store.');
+      }
+      const [catalog, featuredCatalog] = await Promise.all([
+        productsResponse.json(),
+        featuredResponse.json()
+      ]);
+      productData = catalog;
+      setFeatured(featuredCatalog);
+    }
+    setProducts(productData);
+    setCatalogError('');
+  }, []);
 
   useEffect(() => {
-    fetch(`${API_BASE}/products`)
-      .then(res => res.json())
-      .then(data => setProducts(data));
-
-    fetch(`${API_BASE}/products/featured`)
-      .then(res => res.json())
-      .then(data => setFeatured(data));
-  }, []);
+    refreshProducts().catch(error => {
+      console.error('Product catalog loading failed:', error);
+      setCatalogError('Products could not be loaded. Please refresh the page.');
+    });
+  }, [refreshProducts]);
 
   const addToCart = (product) => {
     setCart(current => {
@@ -84,9 +108,10 @@ function App() {
         <Route path="/" element={<HomePage products={clothingProducts} featured={featuredClothing} addToCart={addToCart} />} />
         <Route path="/nutrition" element={<NutritionPage products={products.filter(product => product.category === 'Nutrition')} addToCart={addToCart} />} />
         <Route path="/contact" element={<ContactPage onPayForService={() => setPaymentOpen(true)} />} />
-        <Route path="/admin" element={<AdminPage setAdminLoggedIn={setAdminLoggedIn} adminLoggedIn={adminLoggedIn} />} />
+        <Route path="/admin" element={<AdminPage products={products} onProductsChanged={refreshProducts} />} />
         <Route path="/cart" element={<CartPage cart={cart} removeFromCart={removeFromCart} totalPrice={totalPrice} onCheckout={() => setPaymentOpen(true)} />} />
       </Routes>
+      {catalogError && <p className="catalog-error" role="alert">{catalogError}</p>}
 
       <aside className="floating-cart">
         <div className="mini-header">
@@ -241,49 +266,267 @@ function ContactPage({ onPayForService }) {
   );
 }
 
-function AdminPage({ setAdminLoggedIn, adminLoggedIn }) {
-  const [email, setEmail] = useState('');
+function AdminPage({ products, onProductsChanged }) {
+  const [email, setEmail] = useState('babujy13@gmail.com');
   const [password, setPassword] = useState('');
-  const [stats, setStats] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [session, setSession] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
+  const [authError, setAuthError] = useState('');
   const [message, setMessage] = useState('');
+  const [working, setWorking] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [productForm, setProductForm] = useState(emptyProduct);
+  const [imageFile, setImageFile] = useState(null);
 
   useEffect(() => {
-    if (adminLoggedIn) {
-      fetch(`${API_BASE}/admin/stats`)
-        .then(res => res.json())
-        .then(data => setStats(data));
+    if (!supabase) return undefined;
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (error) setAuthError(error.message);
+      setSession(data?.session ?? null);
+      setAuthLoading(false);
+    }).catch(error => {
+      setAuthError(error.message);
+      setAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setIsAdmin(false);
+      setAuthError('');
+      setAuthLoading(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !session?.user?.id) {
+      setIsAdmin(false);
+      return;
     }
-  }, [adminLoggedIn]);
+
+    let active = true;
+    supabase.from('admin_users').select('user_id').eq('user_id', session.user.id).maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) setAuthError(`Could not verify admin access: ${error.message}`);
+        setIsAdmin(Boolean(data));
+      })
+      .catch(error => {
+        if (active) setAuthError(`Could not verify admin access: ${error.message}`);
+      });
+    return () => { active = false; };
+  }, [session]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-
-    const data = await res.json();
-    if (res.ok) {
-      setAdminLoggedIn(true);
-      setMessage('Welcome back, admin.');
-    } else {
-      setAdminLoggedIn(false);
-      setMessage(data.message || 'Login failed');
+    if (!supabase) return;
+    setWorking(true);
+    setAuthError('');
+    setMessage('');
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      setPassword('');
+      setMessage('Signed in. Verifying administrator access…');
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setWorking(false);
     }
   };
 
-  if (!adminLoggedIn) {
+  const handlePasswordReset = async () => {
+    if (!supabase || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAuthError('Enter a valid administrator email address first.');
+      return;
+    }
+    setWorking(true);
+    setAuthError('');
+    setMessage('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/admin`
+      });
+      if (error) throw error;
+      setMessage('If that address belongs to an admin account, a secure password-reset link has been emailed.');
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handlePasswordChange = async (event) => {
+    event.preventDefault();
+    if (newPassword.length < 10) {
+      setAuthError('Use at least 10 characters for the new password.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setAuthError('The new passwords do not match.');
+      return;
+    }
+    setWorking(true);
+    setAuthError('');
+    setMessage('');
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setNewPassword('');
+      setConfirmPassword('');
+      setMessage('Password updated successfully.');
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (error) {
+      setAuthError(`Could not sign out: ${error.message}`);
+    }
+  };
+
+  const updateProductField = (event) => {
+    const { name, value, checked, type } = event.target;
+    setProductForm(current => ({ ...current, [name]: type === 'checkbox' ? checked : value }));
+  };
+
+  const selectImage = (event) => {
+    const file = event.target.files?.[0] || null;
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (file && (!allowedTypes.includes(file.type) || file.size > 5 * 1024 * 1024)) {
+      setImageFile(null);
+      event.target.value = '';
+      setAuthError('Choose an image file no larger than 5 MB.');
+      return;
+    }
+    setAuthError('');
+    setImageFile(file);
+  };
+
+  const saveProduct = async (event) => {
+    event.preventDefault();
+    if (!supabase) return;
+    setWorking(true);
+    setAuthError('');
+    setMessage('');
+    try {
+      let image = productForm.image.trim();
+      if (imageFile) {
+        const extension = imageFile.name.split('.').pop()?.toLowerCase() || 'image';
+        const imagePath = `${crypto.randomUUID()}.${extension}`;
+        const { error: uploadError } = await supabase.storage
+          .from('product-images')
+          .upload(imagePath, imageFile, { contentType: imageFile.type, upsert: false });
+        if (uploadError) throw uploadError;
+        const { data } = supabase.storage.from('product-images').getPublicUrl(imagePath);
+        image = data.publicUrl;
+      }
+
+      const record = {
+        name: productForm.name.trim(),
+        category: productForm.category,
+        price: Number(productForm.price),
+        image,
+        description: productForm.description.trim(),
+        featured: productForm.featured
+      };
+      const result = editingProduct
+        ? await supabase.from('products').update(record).eq('id', editingProduct.id)
+        : await supabase.from('products').insert(record);
+      if (result.error) throw result.error;
+
+      await onProductsChanged();
+      setProductForm(emptyProduct());
+      setEditingProduct(null);
+      setImageFile(null);
+      setMessage(editingProduct ? 'Product updated.' : 'Product added.');
+    } catch (error) {
+      setAuthError(`Product could not be saved: ${error.message}`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const editProduct = (product) => {
+    setEditingProduct(product);
+    setProductForm({
+      name: product.name,
+      category: product.category,
+      price: String(product.price),
+      image: product.image || '',
+      description: product.description || '',
+      featured: Boolean(product.featured)
+    });
+    setImageFile(null);
+    setMessage('');
+    setAuthError('');
+  };
+
+  const deleteProduct = async (product) => {
+    if (!window.confirm(`Delete "${product.name}" from the catalog?`)) return;
+    setWorking(true);
+    setAuthError('');
+    setMessage('');
+    try {
+      const { error } = await supabase.from('products').delete().eq('id', product.id);
+      if (error) throw error;
+      await onProductsChanged();
+      setMessage(`${product.name} deleted.`);
+    } catch (error) {
+      setAuthError(`Product could not be deleted: ${error.message}`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  if (!isSupabaseConfigured) {
     return (
-      <main className="content form-page">
+      <main className="content form-page admin-login-page">
         <div className="panel auth-panel">
-          <h2>Admin Login</h2>
-          <form className="stacked-form" onSubmit={handleLogin}>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Admin email" />
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" />
-            <button type="submit" className="primary-btn">Login</button>
-          </form>
-          {message && <p className="message-box">{message}</p>}
+          <h2>Admin setup required</h2>
+          <p>Configure the Supabase project URL and public anon key for the storefront before signing in to admin.</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (authLoading) {
+    return <main className="content"><div className="panel"><p>Checking admin session…</p></div></main>;
+  }
+
+  if (!session || !isAdmin) {
+    return (
+      <main className="content form-page admin-login-page">
+        <div className="panel auth-panel">
+          <p className="eyebrow">Store administration</p>
+          <h2>{session ? 'Administrator access required' : 'Admin Login'}</h2>
+          {session ? (
+            <>
+              <p>This signed-in account is not authorized to manage the store.</p>
+              <button type="button" className="secondary-btn" onClick={handleLogout}>Sign out</button>
+            </>
+          ) : (
+            <form className="stacked-form" onSubmit={handleLogin}>
+              <label htmlFor="admin-email">Admin email</label>
+              <input id="admin-email" type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} placeholder="Admin email" />
+              <label htmlFor="admin-password">Password</label>
+              <input id="admin-password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" />
+              <button type="submit" className="primary-btn" disabled={working}>{working ? 'Signing in…' : 'Login'}</button>
+              <button type="button" className="text-button" disabled={working} onClick={handlePasswordReset}>Email a password-reset link</button>
+            </form>
+          )}
+          {authError && <p className="message-box error-message" role="alert">{authError}</p>}
+          {message && <p className="message-box" role="status">{message}</p>}
         </div>
       </main>
     );
@@ -291,26 +534,88 @@ function AdminPage({ setAdminLoggedIn, adminLoggedIn }) {
 
   return (
     <main className="content admin-page">
-      <div className="panel">
-        <h2>Dashboard</h2>
-        <div className="stats-grid">
-          <div className="stat-card"><span>Total Products</span><strong>{stats?.totalProducts ?? 0}</strong></div>
-          <div className="stat-card"><span>Earnings</span><strong>KSh {(stats?.totalRevenue ?? 0).toLocaleString()}</strong></div>
-          <div className="stat-card"><span>Orders</span><strong>{stats?.orders ?? 0}</strong></div>
-          <div className="stat-card"><span>Customers</span><strong>{stats?.customers ?? 0}</strong></div>
+      <section className="panel admin-heading">
+        <div>
+          <p className="eyebrow">Store administration</p>
+          <h2>Admin dashboard</h2>
+          <p>Signed in as {session.user.email}</p>
         </div>
-      </div>
+        <button type="button" className="secondary-btn" onClick={handleLogout}>Sign out</button>
+      </section>
 
-      <div className="panel">
-        <h3>Admin Controls</h3>
-        <ul className="admin-list">
-          <li>Manage products</li>
-          <li>Review customer orders</li>
-          <li>Monitor sales reports</li>
-        </ul>
-      </div>
+      <section className="stats-grid admin-stats">
+        <div className="stat-card"><span>Products in catalog</span><strong>{products.length}</strong></div>
+        <div className="stat-card"><span>Featured products</span><strong>{products.filter(product => product.featured).length}</strong></div>
+      </section>
+
+      <section className="panel product-manager">
+        <div className="admin-section-heading">
+          <div>
+            <p className="eyebrow">Catalog</p>
+            <h3>{editingProduct ? 'Edit product' : 'Add a product'}</h3>
+          </div>
+        </div>
+        <form className="product-editor" onSubmit={saveProduct}>
+          <label>Product name<input name="name" required maxLength="120" value={productForm.name} onChange={updateProductField} /></label>
+          <label>Category
+            <select name="category" value={productForm.category} onChange={updateProductField}>
+              <option>Kids Wear</option><option>Pullnecks</option><option>Nutrition</option>
+            </select>
+          </label>
+          <label>Price (KSh)<input name="price" type="number" min="1" step="1" required value={productForm.price} onChange={updateProductField} /></label>
+          <label>Product image URL<input name="image" type="url" value={productForm.image} onChange={updateProductField} placeholder="https://…" /></label>
+          <label className="image-upload">Or upload an image<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={selectImage} />{imageFile && <span>{imageFile.name}</span>}</label>
+          <label className="product-description">Description<textarea name="description" rows="3" maxLength="500" value={productForm.description} onChange={updateProductField} /></label>
+          <label className="featured-toggle"><input name="featured" type="checkbox" checked={productForm.featured} onChange={updateProductField} /> Show in featured collection</label>
+          <div className="product-editor-actions">
+            <button type="submit" className="primary-btn" disabled={working}>{working ? 'Saving…' : editingProduct ? 'Save changes' : 'Add product'}</button>
+            {editingProduct && <button type="button" className="secondary-btn" onClick={() => { setEditingProduct(null); setProductForm(emptyProduct()); setImageFile(null); }}>Cancel edit</button>}
+          </div>
+        </form>
+        {authError && <p className="message-box error-message" role="alert">{authError}</p>}
+        {message && <p className="message-box" role="status">{message}</p>}
+      </section>
+
+      <section className="panel product-manager">
+        <div className="admin-section-heading">
+          <div><p className="eyebrow">Inventory</p><h3>Manage products</h3></div>
+        </div>
+        <div className="admin-product-list">
+          {products.map(product => (
+            <article className="admin-product-row" key={product.id}>
+              <img src={product.image} alt="" />
+              <div className="admin-product-details">
+                <strong>{product.name}</strong>
+                <span>{product.category} · KSh {Number(product.price).toLocaleString()}</span>
+                {product.featured && <span className="featured-label">Featured</span>}
+              </div>
+              <div className="admin-product-actions">
+                <button type="button" className="secondary-btn" onClick={() => editProduct(product)}>Edit</button>
+                <button type="button" className="danger-btn" disabled={working} onClick={() => deleteProduct(product)}>Delete</button>
+              </div>
+            </article>
+          ))}
+          {products.length === 0 && <p>No products yet. Add the first item above.</p>}
+        </div>
+      </section>
+
+      <section className="panel password-panel">
+        <p className="eyebrow">Account security</p>
+        <h3>Change admin password</h3>
+        <form className="password-form" onSubmit={handlePasswordChange}>
+          <label>New password<input type="password" autoComplete="new-password" minLength="10" required value={newPassword} onChange={event => setNewPassword(event.target.value)} /></label>
+          <label>Confirm new password<input type="password" autoComplete="new-password" minLength="10" required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} /></label>
+          <button type="submit" className="primary-btn" disabled={working}>{working ? 'Updating…' : 'Update password'}</button>
+        </form>
+      </section>
+
+      <p className="admin-notice">Orders and revenue reports are not available yet because checkout currently uses manual M-PESA payment instructions and does not create stored orders.</p>
     </main>
   );
+}
+
+function emptyProduct() {
+  return { name: '', category: 'Kids Wear', price: '', image: '', description: '', featured: false };
 }
 
 function CartPage({ cart, removeFromCart, totalPrice, onCheckout }) {

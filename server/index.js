@@ -110,32 +110,6 @@ app.get('/api/products/:id', (req, res) => {
   return res.json(product);
 });
 
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body || {};
-  const adminEmail = process.env.ADMIN_EMAIL;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (!adminEmail || !adminPassword) {
-    return res.status(503).json({ message: 'Admin login is not configured.' });
-  }
-
-  if (email !== adminEmail || password !== adminPassword) {
-    return res.status(401).json({ message: 'Invalid admin credentials' });
-  }
-
-  return res.json({ success: true, user: { email: adminEmail, role: 'admin' } });
-});
-
-app.get('/api/admin/stats', (req, res) => {
-  res.json({
-    totalProducts: products.length,
-    totalRevenue: 4568000,
-    orders: 128,
-    customers: 542,
-    featuredProducts: products.filter(p => p.featured).length
-  });
-});
-
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Babujy Enterprise backend running on http://localhost:${PORT}`);
