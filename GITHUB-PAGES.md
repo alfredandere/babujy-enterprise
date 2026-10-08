@@ -2,7 +2,8 @@
 
 The storefront and Express API deploy together as Vercel services from the
 repository root. The `vercel.json` configuration sends `/api/*` requests to the
-API and all other paths to the React storefront.
+API, static assets to the React service, and application routes to its
+`index.html` for client-side routing.
 
 The `babujy-enterprise` Vercel project uses the repository root as its root
 directory and the Services framework preset. The custom domain
