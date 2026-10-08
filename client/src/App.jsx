@@ -238,16 +238,39 @@ function ProductGrid({ products, addToCart }) {
 }
 
 function ContactPage({ onPayForService }) {
-  const handleContactSubmit = (event) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const name = String(formData.get('name') ?? '');
-    const email = String(formData.get('email') ?? '');
-    const subject = String(formData.get('subject') ?? '');
-    const message = String(formData.get('message') ?? '');
-    const body = `Name: ${name}\nReply email: ${email}\n\n${message}`;
+  const [sending, setSending] = useState(false);
+  const [submissionMessage, setSubmissionMessage] = useState('');
+  const [submissionError, setSubmissionError] = useState('');
 
-    window.location.href = `mailto:babujy13@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const handleContactSubmit = async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    setSending(true);
+    setSubmissionMessage('');
+    setSubmissionError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.get('name'),
+          email: formData.get('email'),
+          subject: formData.get('subject'),
+          message: formData.get('message')
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Your message could not be sent.');
+      setSubmissionMessage(result.message);
+      form.reset();
+    } catch (error) {
+      console.error('Contact form submission failed:', error);
+      setSubmissionError(error.message || 'Your message could not be sent. Please try again.');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -256,14 +279,17 @@ function ContactPage({ onPayForService }) {
         <h2>Contact Us</h2>
         <p>Have a question or partnership request? Send us a message.</p>
 
-        <form className="stacked-form" onSubmit={handleContactSubmit}>
+        <form className="stacked-form" onSubmit={handleContactSubmit} aria-busy={sending}>
           <input type="text" name="name" placeholder="Full name" required />
           <input type="email" name="email" placeholder="Email address" required />
           <input type="text" name="subject" placeholder="Subject" required />
           <textarea rows="5" name="message" placeholder="Your message" required />
-          <button type="submit" className="primary-btn">Send message</button>
+          <button type="submit" className="primary-btn" disabled={sending}>
+            {sending ? 'Sending…' : 'Send message'}
+          </button>
         </form>
-        <p>Your email app will open with your message addressed to us. Review and send it from there.</p>
+        {submissionMessage && <p className="message-box" role="status">{submissionMessage}</p>}
+        {submissionError && <p className="message-box error-message" role="alert">{submissionError}</p>}
       </div>
 
       <div className="panel info-panel">

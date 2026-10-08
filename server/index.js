@@ -5,7 +5,7 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '16kb' }));
 
 app.get('/', (req, res) => {
   res.redirect(302, 'https://www.babujyenterprise.co.ke/');
@@ -88,6 +88,77 @@ const products = [
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Babujy Enterprise API is running' });
+});
+
+app.post('/api/contact', async (req, res) => {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!apiKey || !from) {
+    return res.status(503).json({
+      message: 'Contact email is not configured yet. Please email babujy13@gmail.com directly.'
+    });
+  }
+
+  const { name, email, subject, message } = req.body ?? {};
+  if (
+    typeof name !== 'string' ||
+    typeof email !== 'string' ||
+    typeof subject !== 'string' ||
+    typeof message !== 'string'
+  ) {
+    return res.status(400).json({ message: 'Please complete all contact form fields.' });
+  }
+
+  const contact = {
+    name: name.trim(),
+    email: email.trim(),
+    subject: subject.trim(),
+    message: message.trim()
+  };
+  if (
+    !contact.name ||
+    contact.name.length > 120 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email) ||
+    contact.email.length > 254 ||
+    !contact.subject ||
+    contact.subject.length > 200 ||
+    !contact.message ||
+    contact.message.length > 5000
+  ) {
+    return res.status(400).json({ message: 'Please check the contact details and try again.' });
+  }
+
+  try {
+    const resendResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from,
+        to: ['babujy13@gmail.com'],
+        reply_to: contact.email,
+        subject: `Website contact: ${contact.subject}`,
+        text: `Name: ${contact.name}\nReply email: ${contact.email}\n\n${contact.message}`
+      })
+    });
+
+    if (!resendResponse.ok) {
+      const errorDetails = await resendResponse.text();
+      console.error(`Resend rejected contact email (${resendResponse.status}): ${errorDetails}`);
+      return res.status(502).json({
+        message: 'Your message could not be delivered right now. Please try again or email babujy13@gmail.com directly.'
+      });
+    }
+
+    return res.status(200).json({ message: 'Your message has been sent. Thank you for contacting us.' });
+  } catch (error) {
+    console.error('Contact email delivery failed:', error);
+    return res.status(502).json({
+      message: 'Your message could not be delivered right now. Please try again or email babujy13@gmail.com directly.'
+    });
+  }
 });
 
 app.get('/api/products', (req, res) => {

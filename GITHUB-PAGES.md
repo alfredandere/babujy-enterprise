@@ -62,5 +62,21 @@ admin dashboard remains unavailable.
    supports password changes and emailed reset links. Passwords are never
    displayed or sent in email; reset emails contain time-limited links.
 
+# Contact form email delivery
+
+The contact form sends messages directly to `babujy13@gmail.com` through the
+Resend API. Configure these private environment variables for the Vercel
+server service in **Settings → Environment Variables**, with Production
+selected:
+
+- `RESEND_API_KEY`: a private API key created in Resend. Never use a `VITE_`
+  prefix or commit this value.
+- `RESEND_FROM_EMAIL`: a sender address on a domain verified in Resend, for
+  example `Babujy Enterprise <contact@babujyenterprise.co.ke>`. Add the DNS
+  records Resend provides for the domain before sending.
+
+Redeploy after adding the variables. The form displays a success confirmation
+only after Resend accepts the message, and shows an error if delivery fails.
+
 Checkout currently shows manual M-PESA instructions; it does not create stored
 orders, so order-management and revenue reporting are not yet available.
