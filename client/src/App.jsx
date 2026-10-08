@@ -238,25 +238,38 @@ function ProductGrid({ products, addToCart }) {
 }
 
 function ContactPage({ onPayForService }) {
+  const handleContactSubmit = (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const name = String(formData.get('name') ?? '');
+    const email = String(formData.get('email') ?? '');
+    const subject = String(formData.get('subject') ?? '');
+    const message = String(formData.get('message') ?? '');
+    const body = `Name: ${name}\nReply email: ${email}\n\n${message}`;
+
+    window.location.href = `mailto:babujy13@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
+
   return (
     <main className="content form-page">
       <div className="panel contact-panel">
         <h2>Contact Us</h2>
         <p>Have a question or partnership request? Send us a message.</p>
 
-        <form className="stacked-form">
-          <input type="text" placeholder="Full name" />
-          <input type="email" placeholder="Email address" />
-          <input type="text" placeholder="Subject" />
-          <textarea rows="5" placeholder="Your message" />
-          <button type="button" className="primary-btn">Send message</button>
+        <form className="stacked-form" onSubmit={handleContactSubmit}>
+          <input type="text" name="name" placeholder="Full name" required />
+          <input type="email" name="email" placeholder="Email address" required />
+          <input type="text" name="subject" placeholder="Subject" required />
+          <textarea rows="5" name="message" placeholder="Your message" required />
+          <button type="submit" className="primary-btn">Send message</button>
         </form>
+        <p>Your email app will open with your message addressed to us. Review and send it from there.</p>
       </div>
 
       <div className="panel info-panel">
         <h3>Get in touch</h3>
         <ul>
-          <li>Email: hello@babujyenterprise.com</li>
+          <li>Email: <a href="mailto:babujy13@gmail.com">babujy13@gmail.com</a></li>
           <li>Customer support: <a href="tel:+254111888259">+254111888259</a></li>
           <li>Payment: Paybill 247247, account 0706313599</li>
         </ul>
