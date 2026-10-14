@@ -362,7 +362,8 @@ button, input, textarea {
 }
 
 .stacked-form input,
-.stacked-form textarea {
+.stacked-form textarea,
+.account-panel textarea {
   width: 100%;
   padding: 14px 16px;
   border: 1px solid var(--line);
@@ -440,6 +441,51 @@ button, input, textarea {
 .admin-login-page {
   grid-template-columns: minmax(0, 560px);
   justify-content: center;
+}
+
+.account-page {
+  grid-template-columns: minmax(0, 700px);
+  justify-content: center;
+}
+
+.account-panel > p:not(.eyebrow) {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.account-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.customer-password-form {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.customer-password-form .primary-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.cart-sync-message {
+  position: fixed;
+  right: 20px;
+  bottom: 230px;
+  z-index: 24;
+  max-width: 310px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: #a32635;
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
 }
 
 .admin-heading,
@@ -705,6 +751,34 @@ button, input, textarea {
 .mini-item > div {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  gap: 5px;
+}
+
+.quantity-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.quantity-control input {
+  width: 76px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+}
+
+.cart-right .quantity-control {
+  font-size: 0.9rem;
+}
+
+.cart-right .quantity-control input {
+  width: 92px;
 }
 
 .mini-total {
@@ -870,6 +944,11 @@ button:disabled {
     margin-top: 28px;
   }
 
+  .cart-sync-message {
+    position: static;
+    max-width: none;
+    margin: 14px 0 0;
+  }
   .admin-page {
     grid-template-columns: minmax(0, 1fr);
   }

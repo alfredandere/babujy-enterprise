@@ -5,13 +5,44 @@ import { isSupabaseConfigured, supabase } from './supabase';
 const API_BASE = import.meta.env.VITE_API_BASE_URL
   ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')}/api`
   : '/api';
+const CART_STORAGE_KEY = 'babujy-shopping-cart';
 
 function App() {
   const [products, setProducts] = useState([]);
   const [featured, setFeatured] = useState([]);
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(readStoredCart);
+  const [customerSession, setCustomerSession] = useState(null);
+  const [authReady, setAuthReady] = useState(!supabase);
+  const [cartReady, setCartReady] = useState(!supabase);
+  const [cartCanSync, setCartCanSync] = useState(!supabase);
+  const [cartOwnerId, setCartOwnerId] = useState(null);
+  const [cartSyncMessage, setCartSyncMessage] = useState('');
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [catalogError, setCatalogError] = useState('');
+  const authEventSeen = useRef(false);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (error) console.error('Customer session lookup failed:', error);
+      if (!authEventSeen.current) {
+        setCustomerSession(data?.session ?? null);
+        setAuthReady(true);
+      }
+    }).catch(error => {
+      console.error('Customer session lookup failed:', error);
+      setAuthReady(true);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      authEventSeen.current = true;
+      setCustomerSession(session);
+      setAuthReady(true);
+      setCartSyncMessage('');
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const refreshProducts = useCallback(async () => {
     let productData;
@@ -46,6 +77,79 @@ function App() {
     });
   }, [refreshProducts]);
 
+  useEffect(() => {
+    if (!authReady) return undefined;
+    const userId = customerSession?.user?.id;
+    if (!supabase || !userId) {
+      setCartOwnerId(null);
+      setCartReady(true);
+      setCartCanSync(true);
+      return undefined;
+    }
+
+    let active = true;
+    setCartReady(false);
+    setCartCanSync(false);
+    const storedCart = readStoredCartRecord();
+    supabase.from('customer_carts').select('items').eq('user_id', userId).maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          console.error('Saved cart could not be loaded:', error);
+          setCartSyncMessage('Your saved cart could not be loaded. Your current cart is still available on this device.');
+          setCart(storedCart.userId === userId || storedCart.userId === null ? storedCart.items : []);
+        } else if (Array.isArray(data?.items)) {
+          setCart(mergeCarts(data.items, storedCart.userId === null ? storedCart.items : []));
+        } else {
+          setCart(storedCart.userId === userId || storedCart.userId === null ? storedCart.items : []);
+        }
+        setCartOwnerId(userId);
+        setCartCanSync(!error);
+        setCartReady(true);
+      })
+      .catch(error => {
+        if (!active) return;
+        console.error('Saved cart could not be loaded:', error);
+        setCartSyncMessage('Your saved cart could not be loaded. Your current cart is still available on this device.');
+        setCart(storedCart.userId === userId || storedCart.userId === null ? storedCart.items : []);
+        setCartOwnerId(userId);
+        setCartReady(true);
+      });
+    return () => { active = false; };
+  }, [authReady, customerSession?.user?.id]);
+
+  useEffect(() => {
+    if (!cartReady) return undefined;
+    const userId = customerSession?.user?.id || null;
+    if (cartOwnerId !== userId) return undefined;
+
+    try {
+      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify({
+        userId,
+        items: cart
+      }));
+    } catch (error) {
+      console.error('Cart could not be saved on this device:', error);
+    }
+
+    if (!supabase || !userId || !cartCanSync) return undefined;
+
+    const timeout = window.setTimeout(async () => {
+      try {
+        const { error } = await supabase.from('customer_carts').upsert(
+          { user_id: userId, items: cart, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        );
+        if (error) throw error;
+        setCartSyncMessage('');
+      } catch (error) {
+        console.error('Saved cart could not be updated:', error);
+        setCartSyncMessage('Cart changes are saved on this device but could not sync to your account.');
+      }
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [cart, cartCanSync, cartOwnerId, cartReady, customerSession?.user?.id]);
+
   const addToCart = (product) => {
     setCart(current => {
       const existing = current.find(item => item.id === product.id);
@@ -56,6 +160,13 @@ function App() {
       }
       return [...current, { ...product, quantity: 1 }];
     });
+  };
+
+  const setItemQuantity = (productId, quantity) => {
+    if (!Number.isInteger(quantity) || quantity < 1) return;
+    setCart(current => current.map(item =>
+      item.id === productId ? { ...item, quantity } : item
+    ));
   };
 
   const removeFromCart = (productId) => {
@@ -71,15 +182,6 @@ function App() {
     () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
     [cart]
   );
-  const clothingProducts = useMemo(
-    () => products.filter(product => product.category !== 'Nutrition'),
-    [products]
-  );
-  const featuredClothing = useMemo(
-    () => featured.filter(product => product.category !== 'Nutrition'),
-    [featured]
-  );
-
   return (
     <div className="page-shell">
       <header className="topbar">
@@ -93,6 +195,7 @@ function App() {
         <nav className="main-nav">
           <NavLink to="/">Home</NavLink>
           <NavLink to="/nutrition">Nutrition</NavLink>
+          <NavLink to="/account">{customerSession ? 'My account' : 'Sign in'}</NavLink>
           <NavLink to="/contact">Contact</NavLink>
           <NavLink to="/admin">Admin</NavLink>
         </nav>
@@ -105,11 +208,12 @@ function App() {
       </header>
 
       <Routes>
-        <Route path="/" element={<HomePage products={clothingProducts} featured={featuredClothing} addToCart={addToCart} />} />
+        <Route path="/" element={<HomePage products={products} featured={featured} addToCart={addToCart} />} />
         <Route path="/nutrition" element={<NutritionPage products={products.filter(product => product.category === 'Nutrition')} addToCart={addToCart} />} />
+        <Route path="/account" element={<AccountPage session={customerSession} authReady={authReady} cartSyncMessage={cartSyncMessage} />} />
         <Route path="/contact" element={<ContactPage onPayForService={() => setPaymentOpen(true)} />} />
         <Route path="/admin" element={<AdminPage products={products} onProductsChanged={refreshProducts} />} />
-        <Route path="/cart" element={<CartPage cart={cart} removeFromCart={removeFromCart} totalPrice={totalPrice} onCheckout={() => setPaymentOpen(true)} />} />
+        <Route path="/cart" element={<CartPage cart={cart} removeFromCart={removeFromCart} setItemQuantity={setItemQuantity} totalPrice={totalPrice} onCheckout={() => setPaymentOpen(true)} />} />
       </Routes>
       {catalogError && <p className="catalog-error" role="alert">{catalogError}</p>}
 
@@ -125,7 +229,7 @@ function App() {
             <div key={item.id} className="mini-item">
               <div>
                 <strong>{item.name}</strong>
-                <span>Qty: {item.quantity}</span>
+                <CartQuantityInput item={item} onChange={quantity => setItemQuantity(item.id, quantity)} />
               </div>
               <span>KSh {(item.price * item.quantity).toLocaleString()}</span>
             </div>
@@ -136,9 +240,49 @@ function App() {
           <strong>KSh {totalPrice.toLocaleString()}</strong>
         </div>
       </aside>
+      {cartSyncMessage && <p className="cart-sync-message" role="status">{cartSyncMessage}</p>}
       {paymentOpen && <PaymentModal totalPrice={totalPrice} onClose={() => setPaymentOpen(false)} />}
     </div>
   );
+}
+
+function readStoredCart() {
+  return mergeCarts([], readStoredCartRecord().items);
+}
+
+function readStoredCartRecord() {
+  try {
+    const stored = window.localStorage.getItem(CART_STORAGE_KEY);
+    const parsed = stored ? JSON.parse(stored) : [];
+    if (Array.isArray(parsed)) return { userId: null, items: parsed };
+    if (
+      parsed &&
+      (typeof parsed.userId === 'string' || parsed.userId === null) &&
+      Array.isArray(parsed.items)
+    ) return parsed;
+    return { userId: null, items: [] };
+  } catch (error) {
+    console.error('Saved cart data could not be read:', error);
+    return { userId: null, items: [] };
+  }
+}
+
+function mergeCarts(savedItems, currentItems) {
+  const merged = new Map();
+  for (const item of [...savedItems, ...currentItems]) {
+    if (
+      !item ||
+      (typeof item.id !== 'string' && typeof item.id !== 'number') ||
+      !Number.isInteger(item.quantity) ||
+      item.quantity < 1 ||
+      !Number.isFinite(Number(item.price))
+    ) continue;
+    const previous = merged.get(item.id);
+    merged.set(item.id, previous
+      ? { ...previous, quantity: previous.quantity + item.quantity }
+      : { ...item, price: Number(item.price) });
+  }
+  return [...merged.values()];
 }
 
 function HomePage({ products, featured, addToCart }) {
@@ -147,9 +291,9 @@ function HomePage({ products, featured, addToCart }) {
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">NEW SEASON</p>
-          <h2>Little looks. Big comfort.</h2>
+          <h2>Find something you’ll love.</h2>
           <p>
-            Shop children’s clothing and cosy pullnecks for every day. Find family nutrition products in our dedicated wellness collection.
+            Shop clothing, nutrition, everyday essentials, and more from Babujy Enterprise.
           </p>
           <div className="cta-row">
             <a href="#shop" className="primary-btn">Shop now</a>
@@ -162,16 +306,16 @@ function HomePage({ products, featured, addToCart }) {
       </section>
 
       <section className="features-grid">
-        <div><h3>Made for little ones</h3><p>Comfortable children's styles</p></div>
-        <div><h3>Easy Returns</h3><p>30-day guarantee</p></div>
+        <div><h3>More to choose from</h3><p>Explore our growing collection</p></div>
+        <div><h3>Easy ordering</h3><p>Choose the quantity you need</p></div>
         <div><h3>Local support</h3><p>Call +254111888259</p></div>
       </section>
 
       <section className="product-section" id="shop">
         <div className="section-header">
           <div>
-            <p className="eyebrow">For the little ones</p>
-            <h3>Kidswear &amp; Pullnecks</h3>
+            <p className="eyebrow">Popular picks</p>
+            <h3>Featured products</h3>
           </div>
         </div>
 
@@ -181,19 +325,241 @@ function HomePage({ products, featured, addToCart }) {
       <section className="full-width-banner">
         <div>
           <p className="eyebrow">A little more to love</p>
-          <h3>Soft layers, happy little days.</h3>
+          <h3>More choice for every day.</h3>
         </div>
       </section>
 
       <section className="product-section">
         <div className="section-header">
           <div>
-            <p className="eyebrow">More styles</p>
-            <h3>Children’s Clothing &amp; Pullnecks</h3>
+            <p className="eyebrow">Browse the store</p>
+            <h3>Shop all products</h3>
           </div>
         </div>
 
         <ProductGrid products={products} addToCart={addToCart} />
+      </section>
+    </main>
+  );
+}
+
+function AccountPage({ session, authReady, cartSyncMessage }) {
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [working, setWorking] = useState(false);
+  const [message, setMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  useEffect(() => {
+    if (!supabase || !session?.user) return undefined;
+    let active = true;
+    setProfileLoading(true);
+    supabase.from('customer_profiles')
+      .select('full_name, phone, delivery_address')
+      .eq('user_id', session.user.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          setErrorMessage(`Your profile could not be loaded: ${error.message}`);
+        } else {
+          setFullName(data?.full_name || session.user.user_metadata?.full_name || '');
+          setPhone(data?.phone || session.user.user_metadata?.phone || '');
+          setDeliveryAddress(data?.delivery_address || '');
+        }
+        setProfileLoading(false);
+      })
+      .catch(error => {
+        if (!active) return;
+        setErrorMessage(`Your profile could not be loaded: ${error.message}`);
+        setProfileLoading(false);
+      });
+    return () => { active = false; };
+  }, [session?.user?.id]);
+
+  const handleAccountSubmit = async event => {
+    event.preventDefault();
+    if (!supabase) return;
+    setWorking(true);
+    setMessage('');
+    setErrorMessage('');
+    try {
+      if (creatingAccount) {
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { data: { full_name: fullName.trim(), phone: phone.trim() } }
+        });
+        if (error) throw error;
+        setPassword('');
+        setMessage(data.session
+          ? 'Your account is ready. Save your contact details below.'
+          : 'Account created. Check your email for a confirmation link, then sign in to save your cart and details.');
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (error) throw error;
+        setPassword('');
+        setMessage('Signed in. Your saved cart and details are loading.');
+      }
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const saveProfile = async event => {
+    event.preventDefault();
+    if (!supabase || !session?.user?.id) return;
+    setWorking(true);
+    setMessage('');
+    setErrorMessage('');
+    try {
+      const { error } = await supabase.from('customer_profiles').upsert({
+        user_id: session.user.id,
+        full_name: fullName.trim(),
+        phone: phone.trim(),
+        delivery_address: deliveryAddress.trim(),
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+      if (error) throw error;
+      setMessage('Your customer details have been saved to your account.');
+    } catch (error) {
+      setErrorMessage(`Your details could not be saved: ${error.message}`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const sendPasswordReset = async () => {
+    const resetEmail = session?.user?.email || email.trim();
+    if (!supabase || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail)) {
+      setErrorMessage('Enter the email address associated with your account.');
+      return;
+    }
+    setWorking(true);
+    setMessage('');
+    setErrorMessage('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: `${window.location.origin}/account`
+      });
+      if (error) throw error;
+      setMessage('If the account can receive password resets, a secure reset link will arrive by email.');
+    } catch (error) {
+      setErrorMessage(`Password-reset email could not be sent: ${error.message}`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const updatePassword = async event => {
+    event.preventDefault();
+    if (newPassword.length < 10) {
+      setErrorMessage('Use at least 10 characters for your new password.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('The new passwords do not match.');
+      return;
+    }
+    setWorking(true);
+    setMessage('');
+    setErrorMessage('');
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setNewPassword('');
+      setConfirmPassword('');
+      setMessage('Your password has been updated.');
+    } catch (error) {
+      setErrorMessage(`Password could not be updated: ${error.message}`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setMessage('You have signed out. Your saved cart remains in your account.');
+    } catch (error) {
+      setErrorMessage(`Could not sign out: ${error.message}`);
+    }
+  };
+
+  if (!authReady) {
+    return <main className="content"><div className="panel"><p>Checking your account…</p></div></main>;
+  }
+
+  if (!isSupabaseConfigured) {
+    return <main className="content"><div className="panel auth-panel"><h2>Accounts are temporarily unavailable</h2><p>Guest shopping is still available. Please try again later to create an account and sync your saved cart.</p></div></main>;
+  }
+
+  return (
+    <main className="content form-page account-page">
+      <section className="panel account-panel">
+        {session ? (
+          <>
+            <p className="eyebrow">Customer account</p>
+            <h2>Your details</h2>
+            <p>Signed in as {session.user.email}. Your cart syncs to your account so you can continue shopping on another device.</p>
+            {cartSyncMessage && <p className="message-box error-message" role="status">{cartSyncMessage}</p>}
+            {profileLoading ? <p>Loading your saved details…</p> : (
+              <form className="stacked-form" onSubmit={saveProfile}>
+                <label htmlFor="customer-name">Full name</label>
+                <input id="customer-name" autoComplete="name" required maxLength="120" value={fullName} onChange={event => setFullName(event.target.value)} />
+                <label htmlFor="customer-phone">Phone number</label>
+                <input id="customer-phone" type="tel" autoComplete="tel" value={phone} onChange={event => setPhone(event.target.value)} />
+                <label htmlFor="customer-address">Delivery address</label>
+                <textarea id="customer-address" autoComplete="street-address" rows="3" maxLength="500" value={deliveryAddress} onChange={event => setDeliveryAddress(event.target.value)} />
+                <button type="submit" className="primary-btn" disabled={working || profileLoading}>{working ? 'Saving…' : 'Save my details'}</button>
+              </form>
+            )}
+            <form className="password-form customer-password-form" onSubmit={updatePassword}>
+              <label>New password<input type="password" autoComplete="new-password" minLength="10" required value={newPassword} onChange={event => setNewPassword(event.target.value)} /></label>
+              <label>Confirm new password<input type="password" autoComplete="new-password" minLength="10" required value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} /></label>
+              <button type="submit" className="primary-btn" disabled={working}>{working ? 'Updating…' : 'Update password'}</button>
+            </form>
+            <div className="account-actions">
+              <button type="button" className="text-button" disabled={working} onClick={sendPasswordReset}>Email me a password-reset link</button>
+              <button type="button" className="secondary-btn" disabled={working} onClick={signOut}>Sign out</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="eyebrow">Customer account</p>
+            <h2>{creatingAccount ? 'Create your account' : 'Sign in to save your cart'}</h2>
+            <p>You can shop as a guest. An account lets you save your cart and customer details for next time.</p>
+            <form className="stacked-form" onSubmit={handleAccountSubmit}>
+              {creatingAccount && <>
+                <label htmlFor="customer-signup-name">Full name</label>
+                <input id="customer-signup-name" autoComplete="name" required maxLength="120" value={fullName} onChange={event => setFullName(event.target.value)} />
+                <label htmlFor="customer-signup-phone">Phone number (optional)</label>
+                <input id="customer-signup-phone" type="tel" autoComplete="tel" value={phone} onChange={event => setPhone(event.target.value)} />
+              </>}
+              <label htmlFor="customer-email">Email address</label>
+              <input id="customer-email" type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} />
+              <label htmlFor="customer-password">Password</label>
+              <input id="customer-password" type="password" autoComplete={creatingAccount ? 'new-password' : 'current-password'} minLength={creatingAccount ? 10 : undefined} required value={password} onChange={event => setPassword(event.target.value)} />
+              <button type="submit" className="primary-btn" disabled={working}>{working ? 'Please wait…' : creatingAccount ? 'Create account' : 'Sign in'}</button>
+            </form>
+            {!creatingAccount && <button type="button" className="text-button" disabled={working} onClick={sendPasswordReset}>Forgot your password?</button>}
+            <button type="button" className="text-button" disabled={working} onClick={() => { setCreatingAccount(!creatingAccount); setMessage(''); setErrorMessage(''); }}>
+              {creatingAccount ? 'Already have an account? Sign in' : 'New here? Create an account'}
+            </button>
+          </>
+        )}
+        {errorMessage && <p className="message-box error-message" role="alert">{errorMessage}</p>}
+        {message && <p className="message-box" role="status">{message}</p>}
       </section>
     </main>
   );
@@ -471,6 +837,15 @@ function AdminPage({ products, onProductsChanged }) {
   const saveProduct = async (event) => {
     event.preventDefault();
     if (!supabase) return;
+    if (!productForm.name.trim() || !productForm.category.trim()) {
+      setAuthError('Enter a product name and category.');
+      return;
+    }
+    const price = Number(productForm.price);
+    if (!Number.isFinite(price) || price <= 0) {
+      setAuthError('Enter a price greater than zero.');
+      return;
+    }
     setWorking(true);
     setAuthError('');
     setMessage('');
@@ -489,8 +864,8 @@ function AdminPage({ products, onProductsChanged }) {
 
       const record = {
         name: productForm.name.trim(),
-        category: productForm.category,
-        price: Number(productForm.price),
+        category: productForm.category.trim(),
+        price,
         image,
         description: productForm.description.trim(),
         featured: productForm.featured
@@ -555,6 +930,7 @@ function AdminPage({ products, onProductsChanged }) {
     return matchesSearch &&
       (inventoryCategory === 'All categories' || product.category === inventoryCategory);
   });
+  const productCategories = [...new Set(products.map(product => product.category).filter(Boolean))].sort();
 
   const deleteProduct = async (product) => {
     if (!window.confirm(`Delete "${product.name}" from the catalog?`)) return;
@@ -647,11 +1023,7 @@ function AdminPage({ products, onProductsChanged }) {
         </div>
         <form className="product-editor" onSubmit={saveProduct}>
           <label>Product name<input ref={productNameInputRef} name="name" required maxLength="120" value={productForm.name} onChange={updateProductField} /></label>
-          <label>Category
-            <select name="category" value={productForm.category} onChange={updateProductField}>
-              <option>Kids Wear</option><option>Pullnecks</option><option>Nutrition</option>
-            </select>
-          </label>
+          <label>Category<input name="category" required maxLength="40" value={productForm.category} onChange={updateProductField} placeholder="e.g. Kids Wear, Home, Electronics" /></label>
           <label>Price (KSh)<input name="price" type="number" min="1" step="1" required value={productForm.price} onChange={updateProductField} /></label>
           <label>Product image URL<input name="image" type="url" value={productForm.image} onChange={updateProductField} placeholder="https://…" /></label>
           <label className="image-upload">Or upload an image<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={selectImage} />{imageFile && <span>{imageFile.name}</span>}</label>
@@ -677,7 +1049,7 @@ function AdminPage({ products, onProductsChanged }) {
           </label>
           <label>Category
             <select value={inventoryCategory} onChange={event => setInventoryCategory(event.target.value)}>
-              <option>All categories</option><option>Kids Wear</option><option>Pullnecks</option><option>Nutrition</option>
+              <option>All categories</option>{productCategories.map(category => <option key={category}>{category}</option>)}
             </select>
           </label>
         </div>
@@ -721,7 +1093,28 @@ function emptyProduct() {
   return { name: '', category: 'Kids Wear', price: '', image: '', description: '', featured: false };
 }
 
-function CartPage({ cart, removeFromCart, totalPrice, onCheckout }) {
+function CartQuantityInput({ item, onChange }) {
+  return (
+    <label className="quantity-control">
+      <span>Quantity</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min="1"
+        step="1"
+        required
+        aria-label={`Quantity for ${item.name}`}
+        value={item.quantity}
+        onChange={event => {
+          const quantity = Number(event.target.value);
+          if (Number.isInteger(quantity) && quantity >= 1) onChange(quantity);
+        }}
+      />
+    </label>
+  );
+}
+
+function CartPage({ cart, removeFromCart, setItemQuantity, totalPrice, onCheckout }) {
   return (
     <main className="content cart-page">
       <div className="panel cart-panel">
@@ -741,7 +1134,7 @@ function CartPage({ cart, removeFromCart, totalPrice, onCheckout }) {
                 </div>
                 <div className="cart-right">
                   <strong>KSh {(item.price * item.quantity).toLocaleString()}</strong>
-                  <span>Qty: {item.quantity}</span>
+                  <CartQuantityInput item={item} onChange={quantity => setItemQuantity(item.id, quantity)} />
                   <button onClick={() => removeFromCart(item.id)}>Remove</button>
                 </div>
               </div>

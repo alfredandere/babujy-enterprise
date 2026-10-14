@@ -26,7 +26,8 @@ Express API must be deployed separately for that mirror.
 3. Push to `main` or run the **Deploy storefront to GitHub Pages** workflow.
 
 The workflow builds with the repository URL prefix and publishes `client/dist`.
-The cart is browser-local and product data is served by the API.
+Guest carts are saved in the browser; customer accounts and cross-device cart
+sync require the Supabase configuration described below.
 
 # Admin dashboard setup
 
@@ -34,10 +35,13 @@ Product changes, uploaded images, and administrator accounts use Supabase.
 Without these settings, the storefront uses the API's sample catalog and the
 admin dashboard remains unavailable.
 
-1. Create a Supabase project and run [`supabase/schema.sql`](./supabase/schema.sql)
-   in its SQL Editor. This creates the public product catalog and the
-   administrator-only product and image policies, and seeds the current sample
-   catalog.
+1. For a new Supabase project, run [`supabase/schema.sql`](./supabase/schema.sql)
+   in the SQL Editor. It creates the product catalog, administrator-only
+   product/image policies, customer-owned row policies, and sample products.
+   For an existing store database, run
+   [`supabase/customer-accounts.sql`](./supabase/customer-accounts.sql) to add
+   customer profiles and carts, allow custom product categories, and apply the
+   customer row-level security policies without reseeding the catalog.
 2. In Supabase **Authentication → Users**, create the first administrator with
    the intended email address. In the SQL Editor, grant that user admin access:
 
@@ -53,12 +57,17 @@ admin dashboard remains unavailable.
    the Supabase service-role key in Vite variables or frontend code.
 4. In Supabase **Authentication → URL Configuration**, set the Site URL to
    `https://www.babujyenterprise.co.ke` and allow
-   `https://www.babujyenterprise.co.ke/admin` as a redirect URL. Configure
+   `https://www.babujyenterprise.co.ke/admin` and
+   `https://www.babujyenterprise.co.ke/account` as redirect URLs. Enable email
+   confirmation and configure
    custom SMTP in **Authentication → SMTP Settings** for reliable password
-   reset email delivery to customers/admins.
+   reset and account confirmation email delivery to customers/admins.
 5. Open `https://www.babujyenterprise.co.ke/admin` and sign in using the
    administrator account. The dashboard supports catalog creation, edits,
-   price changes, featured status, image URLs/uploads, and deletion. It also
+   any non-empty product category, price changes, featured status, image
+   URLs/uploads, and deletion. Customers can browse and shop as guests, set
+   quantities directly in the cart, or create an account at `/account` to save
+   profile details and sync their cart between visits/devices. It also
    supports password changes and emailed reset links. Passwords are never
    displayed or sent in email; reset emails contain time-limited links.
 
