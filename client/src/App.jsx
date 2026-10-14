@@ -1,4 +1,4 @@
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isSupabaseConfigured, supabase } from './supabase';
 
@@ -8,6 +8,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL
 const CART_STORAGE_KEY = 'babujy-shopping-cart';
 
 function App() {
+  const location = useLocation();
   const [products, setProducts] = useState([]);
   const [featured, setFeatured] = useState([]);
   const [cart, setCart] = useState(readStoredCart);
@@ -20,6 +21,48 @@ function App() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [catalogError, setCatalogError] = useState('');
   const authEventSeen = useRef(false);
+  const lastTrackedPath = useRef(null);
+
+  useEffect(() => {
+    const pagePath = location.pathname;
+    if (!supabase || pagePath === '/admin' || pagePath.startsWith('/admin/')) return undefined;
+    if (lastTrackedPath.current === pagePath) return undefined;
+    const isSessionEntry = lastTrackedPath.current === null;
+    lastTrackedPath.current = pagePath;
+
+    let sessionId;
+    try {
+      sessionId = window.sessionStorage.getItem('babujy-traffic-session');
+      if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId)) {
+        sessionId = crypto.randomUUID();
+        window.sessionStorage.setItem('babujy-traffic-session', sessionId);
+      }
+    } catch (error) {
+      console.warn('A browsing session could not be saved for traffic analytics:', error);
+      sessionId = crypto.randomUUID();
+    }
+
+    let referrerHost = '';
+    if (isSessionEntry) {
+      try {
+        const host = document.referrer ? new URL(document.referrer).hostname : '';
+        if (host !== window.location.hostname) referrerHost = host;
+      } catch (error) {
+        console.warn('The page referrer could not be read for traffic analytics:', error);
+      }
+    }
+
+    supabase.rpc('record_website_page_view', {
+      p_session_id: sessionId,
+      p_page_path: pagePath,
+      p_referrer_host: referrerHost
+    }).then(({ error }) => {
+      if (error) console.error('Website page view could not be recorded:', error);
+    }).catch(error => {
+      console.error('Website page view could not be recorded:', error);
+    });
+    return undefined;
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -688,6 +731,11 @@ function AdminPage({ products, onProductsChanged }) {
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventoryCategory, setInventoryCategory] = useState('All categories');
   const [imagePreview, setImagePreview] = useState('');
+  const [trafficDays, setTrafficDays] = useState(7);
+  const [trafficSummary, setTrafficSummary] = useState(null);
+  const [trafficLoading, setTrafficLoading] = useState(false);
+  const [trafficError, setTrafficError] = useState('');
+  const [trafficRefresh, setTrafficRefresh] = useState(0);
   const productManagerRef = useRef(null);
   const productNameInputRef = useRef(null);
 
@@ -730,6 +778,32 @@ function AdminPage({ products, onProductsChanged }) {
       });
     return () => { active = false; };
   }, [session]);
+
+  useEffect(() => {
+    if (!supabase || !isAdmin) {
+      setTrafficSummary(null);
+      return undefined;
+    }
+
+    let active = true;
+    setTrafficLoading(true);
+    setTrafficError('');
+    supabase.rpc('get_website_traffic_summary', { p_days: trafficDays })
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) throw error;
+        setTrafficSummary(data);
+      })
+      .catch(error => {
+        if (!active) return;
+        console.error('Website traffic could not be loaded:', error);
+        setTrafficError(`Website traffic could not be loaded: ${error.message}`);
+      })
+      .finally(() => {
+        if (active) setTrafficLoading(false);
+      });
+    return () => { active = false; };
+  }, [isAdmin, session?.user?.id, trafficDays, trafficRefresh]);
 
   useEffect(() => {
     if (!imageFile) {
@@ -931,6 +1005,8 @@ function AdminPage({ products, onProductsChanged }) {
       (inventoryCategory === 'All categories' || product.category === inventoryCategory);
   });
   const productCategories = [...new Set(products.map(product => product.category).filter(Boolean))].sort();
+  const dailyTraffic = trafficSummary?.daily || [];
+  const highestDailyViews = Math.max(1, ...dailyTraffic.map(day => Number(day.views || 0)));
 
   const deleteProduct = async (product) => {
     if (!window.confirm(`Delete "${product.name}" from the catalog?`)) return;
@@ -1014,6 +1090,59 @@ function AdminPage({ products, onProductsChanged }) {
         <div className="stat-card"><span>Featured products</span><strong>{products.filter(product => product.featured).length}</strong></div>
       </section>
 
+      <section className="panel traffic-panel">
+        <div className="admin-section-heading">
+          <div>
+            <p className="eyebrow">Store analytics</p>
+            <h3>Website traffic</h3>
+            <p className="traffic-caption">Page views and browsing sessions. Admin page visits are excluded.</p>
+          </div>
+          <div className="traffic-controls">
+            <label htmlFor="traffic-period">Period</label>
+            <select id="traffic-period" value={trafficDays} onChange={event => setTrafficDays(Number(event.target.value))}>
+              <option value={7}>Last 7 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+            </select>
+            <button type="button" className="secondary-btn" onClick={() => setTrafficRefresh(value => value + 1)} disabled={trafficLoading}>
+              {trafficLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+        {trafficError && <p className="message-box error-message" role="alert">{trafficError}</p>}
+        {trafficLoading && !trafficSummary ? <p role="status">Loading website traffic…</p> : trafficSummary && (
+          <>
+            <div className="stats-grid traffic-stats">
+              <div className="stat-card"><span>Page views</span><strong>{Number(trafficSummary.totalViews || 0).toLocaleString()}</strong></div>
+              <div className="stat-card"><span>Browsing sessions</span><strong>{Number(trafficSummary.uniqueSessions || 0).toLocaleString()}</strong></div>
+            </div>
+            <div className="traffic-chart-section">
+              <h4>Daily page views</h4>
+              {dailyTraffic.length ? (
+                <div className="traffic-chart" role="list" aria-label={`Daily page views over the last ${trafficDays} days`}>
+                  {dailyTraffic.map(day => {
+                    const views = Number(day.views || 0);
+                    return (
+                      <div className="traffic-bar-group" key={day.date} role="listitem" aria-label={`${formatTrafficDate(day.date)}: ${views} views, ${day.sessions} sessions`}>
+                        <span className="traffic-bar-value">{views > 0 ? views : ''}</span>
+                        <div className="traffic-bar-track">
+                          <div className="traffic-bar" style={{ height: `${Math.max(views > 0 ? 6 : 0, views / highestDailyViews * 100)}%` }} />
+                        </div>
+                        <span className="traffic-bar-label">{formatTrafficDate(day.date, trafficDays > 14)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : <p>No page views recorded for this period.</p>}
+            </div>
+            <div className="traffic-breakdowns">
+              <TrafficBreakdown title="Popular pages" rows={trafficSummary.topPages} labelKey="path" />
+              <TrafficBreakdown title="Referral sites" rows={trafficSummary.topSources} labelKey="source" emptyLabel="No referral sites recorded yet." />
+            </div>
+          </>
+        )}
+      </section>
+
       <section className="panel product-manager" ref={productManagerRef}>
         <div className="admin-section-heading">
           <div>
@@ -1091,6 +1220,31 @@ function AdminPage({ products, onProductsChanged }) {
 
 function emptyProduct() {
   return { name: '', category: 'Kids Wear', price: '', image: '', description: '', featured: false };
+}
+
+function formatTrafficDate(value, compact = false) {
+  const date = new Date(`${value}T00:00:00`);
+  return new Intl.DateTimeFormat(undefined, compact
+    ? { month: 'numeric', day: 'numeric' }
+    : { weekday: 'short' }).format(date);
+}
+
+function TrafficBreakdown({ title, rows, labelKey, emptyLabel = 'No page views recorded yet.' }) {
+  return (
+    <section className="traffic-breakdown">
+      <h4>{title}</h4>
+      {rows?.length ? (
+        <ol>
+          {rows.map(row => (
+            <li key={row[labelKey]}>
+              <span title={row[labelKey]}>{row[labelKey]}</span>
+              <strong>{Number(row.views || 0).toLocaleString()}</strong>
+            </li>
+          ))}
+        </ol>
+      ) : <p>{emptyLabel}</p>}
+    </section>
+  );
 }
 
 function CartQuantityInput({ item, onChange }) {

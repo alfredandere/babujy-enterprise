@@ -512,6 +512,135 @@ button, input, textarea {
   margin: 0;
 }
 
+.traffic-panel {
+  min-width: 0;
+}
+
+.traffic-panel > .admin-section-heading {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.traffic-caption {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.traffic-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.traffic-controls label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.traffic-controls select {
+  min-width: 132px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f9f7f4;
+  color: var(--text);
+}
+
+.traffic-stats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.traffic-chart-section {
+  margin-top: 24px;
+}
+
+.traffic-chart-section h4,
+.traffic-breakdown h4 {
+  margin: 0 0 12px;
+}
+
+.traffic-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-height: 184px;
+  overflow-x: auto;
+  padding: 12px 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.traffic-bar-group {
+  display: grid;
+  grid-template-rows: 20px minmax(90px, 1fr) 28px;
+  flex: 1 0 30px;
+  gap: 5px;
+  min-width: 30px;
+  text-align: center;
+}
+
+.traffic-bar-value,
+.traffic-bar-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.traffic-bar-track {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.035) 1px, transparent 1px);
+  background-size: 100% 25%;
+}
+
+.traffic-bar {
+  width: min(100%, 28px);
+  min-height: 0;
+  border-radius: 5px 5px 0 0;
+  background: var(--primary);
+}
+
+.traffic-breakdowns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.traffic-breakdown {
+  min-width: 0;
+}
+
+.traffic-breakdown ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.traffic-breakdown li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.traffic-breakdown li span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .product-manager,
 .password-panel {
   min-width: 0;
@@ -994,6 +1123,15 @@ button:disabled {
   .admin-heading,
   .admin-section-heading {
     align-items: flex-start;
+  }
+
+  .traffic-controls {
+    width: 100%;
+  }
+
+  .traffic-breakdowns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
   }
 
   .admin-stats {

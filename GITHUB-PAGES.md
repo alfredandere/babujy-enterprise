@@ -42,6 +42,8 @@ admin dashboard remains unavailable.
    [`supabase/customer-accounts.sql`](./supabase/customer-accounts.sql) to add
    customer profiles and carts, allow custom product categories, and apply the
    customer row-level security policies without reseeding the catalog.
+   Then run [`supabase/traffic-analytics.sql`](./supabase/traffic-analytics.sql)
+   to enable admin traffic reporting and privacy-conscious page-view tracking.
 2. In Supabase **Authentication → Users**, create the first administrator with
    the intended email address. In the SQL Editor, grant that user admin access:
 
@@ -65,11 +67,14 @@ admin dashboard remains unavailable.
 5. Open `https://www.babujyenterprise.co.ke/admin` and sign in using the
    administrator account. The dashboard supports catalog creation, edits,
    any non-empty product category, price changes, featured status, image
-   URLs/uploads, and deletion. Customers can browse and shop as guests, set
-   quantities directly in the cart, or create an account at `/account` to save
-   profile details and sync their cart between visits/devices. It also
-   supports password changes and emailed reset links. Passwords are never
-   displayed or sent in email; reset emails contain time-limited links.
+   URLs/uploads, and deletion. The admin dashboard also reports page views,
+   browsing sessions, daily traffic, popular pages, and referral sites. Tracking
+   stores anonymous session IDs and page/referrer host names only, not personal
+   details, IP addresses, or full referrer URLs. Customers can browse and shop
+   as guests, set quantities directly in the cart, or create an account at
+   `/account` to save profile details and sync their cart between visits/devices.
+   It also supports password changes and emailed reset links. Passwords are
+   never displayed or sent in email; reset emails contain time-limited links.
 
 # Contact form email delivery
 
